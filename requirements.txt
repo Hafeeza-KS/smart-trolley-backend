@@ -2,3 +2,8 @@ fastapi
 uvicorn
 razorpay
 python-dotenv
+sqlalchemy
+psycopg2-binary
+reportlab
+qrcode
+pillow
