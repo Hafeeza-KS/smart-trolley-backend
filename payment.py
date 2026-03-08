@@ -18,7 +18,7 @@ def create_order(amount: int):
     amount: in rupees
     """
     order = client.order.create({
-        "amount": amount
+        "amount": amount,
         "currency": "INR",
         "payment_capture": 1
     })
