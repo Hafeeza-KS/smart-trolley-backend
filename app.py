@@ -8,15 +8,21 @@ supabase = create_client(
 from fastapi import FastAPI, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi import Query
 from sqlalchemy import text
 from database import engine
 from payment import create_order
 from datetime import datetime
 import qrcode
-
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Image
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
+import hashlib
+import time
+
+
+SECRET_KEY = "smart_trolley_secure_key"
+
 
 app = FastAPI()
 
@@ -260,6 +266,8 @@ def receive_esp32_data(data: dict):
 @app.get("/generate-receipt")
 def generate_receipt(order_id: str):
 
+    timestamp = int(time.time())
+    token = hashlib.sha256(f"{order_id}{SECRET_KEY}{timestamp}".encode()).hexdigest()
     with engine.connect() as conn:
 
         order = conn.execute(
@@ -318,7 +326,7 @@ def generate_receipt(order_id: str):
     elements.append(Spacer(1, 20))
 
     # QR verification URL (Render backend)
-    verification_url = f"https://smart-trolley-backend-5x17.onrender.com/verify-invoice/{order_id}"
+    verification_url = f"https://smart-trolley-backend-5x17.onrender.com/verify-invoice/{order_id}?token={token}&ts={timestamp}"
 
     qr = qrcode.make(verification_url)
 
@@ -356,8 +364,29 @@ def generate_receipt(order_id: str):
 
 # ---------------- VERIFY PAGE ----------------
 
+
 @app.get("/verify-invoice/{order_id}", response_class=HTMLResponse)
-def verify_page(order_id: str):
+def verify_page(order_id: str, token: str = Query(...), ts: int = Query(...)):
+
+    current_time = int(time.time())
+
+    # QR valid for 10 minutes
+    if current_time - ts > 600:
+        return """
+        <div style="background:red;color:white;padding:50px;text-align:center;font-size:30px;">
+            ❌ QR CODE EXPIRED
+        </div>
+        """
+
+    expected_token = hashlib.sha256(f"{order_id}{SECRET_KEY}{ts}".encode()).hexdigest()
+
+    if token != expected_token:
+        return """
+        <div style="background:red;color:white;padding:50px;text-align:center;font-size:30px;">
+            ❌ INVALID OR TAMPERED INVOICE
+        </div>
+        """
+
     return f"""
     <html>
     <head>
