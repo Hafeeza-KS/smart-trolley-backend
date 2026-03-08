@@ -7,3 +7,4 @@ psycopg2-binary
 reportlab
 qrcode
 pillow
+python-multipart
