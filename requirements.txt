@@ -8,3 +8,4 @@ reportlab
 qrcode
 pillow
 python-multipart
+supabase

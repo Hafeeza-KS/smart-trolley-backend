@@ -1,10 +1,16 @@
+from supabase import create_client
+import os
+
+supabase = create_client(
+    os.getenv("SUPABASE_URL"),
+    os.getenv("SUPABASE_KEY")
+)
 from fastapi import FastAPI, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 from database import engine
 from payment import create_order
-import os
 from datetime import datetime
 import qrcode
 
@@ -311,7 +317,8 @@ def generate_receipt(order_id: str):
     elements.append(table)
     elements.append(Spacer(1, 20))
 
-    verification_url = f"http://192.168.1.10:8000/verify-invoice/{order_id}"
+    # QR verification URL (Render backend)
+    verification_url = f"https://smart-trolley-backend.onrender.com/verify-invoice/{order_id}"
 
     qr = qrcode.make(verification_url)
 
@@ -327,11 +334,25 @@ def generate_receipt(order_id: str):
 
     doc.build(elements)
 
+    # ---------------- Upload to Supabase Storage ----------------
+
+    with open(filename, "rb") as f:
+        supabase.storage.from_("receipts").upload(
+            f"receipt_{order_id}.pdf",
+            f,
+            {"content-type": "application/pdf"}
+        )
+
+    # Get public URL
+    receipt_url = supabase.storage.from_("receipts").get_public_url(
+        f"receipt_{order_id}.pdf"
+    )
+
     return {
         "message": "Professional receipt generated",
-        "file_path": filename
+        "file_path": filename,
+        "receipt_url": receipt_url
     }
-
 
 # ---------------- VERIFY PAGE ----------------
 
