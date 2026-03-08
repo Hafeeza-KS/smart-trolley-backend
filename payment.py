@@ -18,7 +18,7 @@ def create_order(amount: int):
     amount: in rupees
     """
     order = client.order.create({
-        "amount": amount * 100,   # Razorpay expects paise
+        "amount": amount
         "currency": "INR",
         "payment_capture": 1
     })
