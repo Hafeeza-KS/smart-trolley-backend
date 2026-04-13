@@ -12,14 +12,17 @@ client = razorpay.Client(
     )
 )
 
-def create_order(amount: int):
-    """
-    Create Razorpay order
-    amount: in rupees
-    """
+def create_order(amount: float):
+    amount_paise = int(amount * 100)  # convert to paise
+
     order = client.order.create({
-        "amount": amount,
+        "amount": amount_paise,
         "currency": "INR",
-        "payment_capture": 1
+        "payment_capture": 1,
+        "notes": {
+            "system": "smart_trolley",
+            "secure": "true"
+        }
     })
+
     return order
