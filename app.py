@@ -48,7 +48,8 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000",
+        "http://192.168.1.7:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -131,11 +132,11 @@ def compute_risk_score(conn, trolley_id: int, order_id: str = None) -> int:
     return sum(weights.get(f.severity, 0) for f in flags)
 
 
-def validate_session(conn, trolley_code: str, session_token: str) -> int:
+def validate_session(conn, trolley_code: str, session_token: str):
 
     session = conn.execute(
         text("""
-            SELECT s.id, s.trolley_id
+            SELECT s.id, s.trolley_id, t.session_expires_at
             FROM sessions s
             JOIN trolleys t ON s.trolley_id = t.id
             WHERE t.trolley_code = :code
@@ -147,7 +148,11 @@ def validate_session(conn, trolley_code: str, session_token: str) -> int:
     ).fetchone()
 
     if not session:
-        raise HTTPException(status_code=401, detail="Invalid or expired session")
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    # ✅ NOW THIS WILL WORK
+    if session.session_expires_at and session.session_expires_at < datetime.now():
+        raise HTTPException(status_code=401, detail="Session expired")
 
     return session.trolley_id
 
@@ -396,9 +401,30 @@ def scan_product(barcode: str, trolley_code: str, session_token: str = None):
                 raise HTTPException(status_code=404, detail="Trolley not found")
             trolley_id = trolley.id
 
+
+        conn.execute(
+            text("""
+                UPDATE trolleys
+                SET session_expires_at = NOW() + INTERVAL '2 hours'
+                WHERE trolley_code = :code
+            """),
+            {"code": trolley_code}
+        )
+
+        conn.execute(
+            text("""
+                UPDATE sessions
+                SET expires_at = NOW() + INTERVAL '2 hours'
+                WHERE session_token = :token
+            """),
+            {"token": session_token}
+        )
+
+
+
         # Product lookup
         product = conn.execute(
-            text("SELECT id, price, name FROM products WHERE barcode = :barcode"),
+            text("SELECT id, price, name, weight FROM products WHERE barcode = :barcode"),
             {"barcode": barcode}
         ).fetchone()
         if not product:
@@ -492,10 +518,10 @@ def scan_product(barcode: str, trolley_code: str, session_token: str = None):
             old_qty = 0
             conn.execute(
                 text("""
-                    INSERT INTO cart (trolley_id, product_id, quantity, scanned_at)
-                    VALUES (:trolley_id, :product_id, 1, NOW())
+                    INSERT INTO cart (trolley_id, product_id, quantity, scanned_at, expected_weight)
+                    VALUES (:trolley_id, :product_id, 1, NOW(), :weight )
                 """),
-                {"trolley_id": trolley_id, "product_id": product_id}
+                {"trolley_id": trolley_id, "product_id": product_id, "weight": float(product.weight)}
             )
 
         # Audit log
@@ -509,7 +535,13 @@ def scan_product(barcode: str, trolley_code: str, session_token: str = None):
              "old": old_qty, "new": old_qty + 1}
         )
 
-        return {"message": "Product added to cart", "product": product.name}
+        return {
+            "message": "Product added to cart",
+            "product": product.name,
+            "price": float(product.price),
+            "expected_weight": float(product.weight),
+            "detected_weight": float(product.weight)   # mimic live weight
+        }
 
 
 # ================================================================
@@ -898,6 +930,7 @@ def payment_success(data: dict):
         if order.payment_status == "SUCCESS":
             return {"message": "Already processed"}
 
+        # ✅ UPDATE PAYMENT
         conn.execute(
             text("""
                 UPDATE orders
@@ -907,8 +940,42 @@ def payment_success(data: dict):
             {"id": order_id}
         )
 
-    return {"message": "Payment verified & successful"}
+    # ✅ GENERATE RECEIPT FIRST
+    receipt = generate_receipt(order_id)
 
+    # ✅ END SESSION AFTER RECEIPT
+    if session_token:
+        end_session(session_token)
+
+    return {
+        "message": "Payment successful",
+        "receipt": receipt
+    }
+
+
+
+# ================================================================
+# END SESSION (MANUAL)
+# ================================================================
+@app.post("/end-session")
+def end_session(session_token: str):
+
+    conn = engine.connect()
+
+    conn.execute(
+        text("""
+            UPDATE sessions 
+            SET status = 'ENDED',
+                ended_at = NOW()   -- ✅ ADD THIS
+            WHERE session_token = :token
+        """),
+        {"token": session_token}
+    )
+
+    conn.commit()
+    conn.close()
+
+    return {"message": "Session ended"}
 
 # ================================================================
 # ESP32 DATA
